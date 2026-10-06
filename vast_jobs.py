@@ -22,19 +22,22 @@ from logging_helpers import human_log as _log
 from secure_files import atomic_write_private_bytes, atomic_write_private_text, ensure_private_directory, read_regular_file_nofollow
 from vast_credentials import VastCredentialStore
 from vast_provider import VastClient, VastError, number, positive_id
+from vast_worker_profile import CUSTOM_WORKER, PROFILE_ERROR, WORKER_IMAGE, WORKER_REVISION
 
 from vast_exchanges import SUPPORTED_EXCHANGES
 
 SERVICE = "Vast"
 PROJECT = Path(__file__).resolve().parent
-IMAGE = "ghcr.io/msei99/pbgui-pb8-worker@sha256:792a11f40098a3fffe9365c46e38f60c7bddaa35179c9bc608d130b5e1449dbe"
-REVISION = "061e472e3d400cb3a740583d52f9d46e02eaf781"
+# The active pair comes from vast_worker_profile; [vast_worker] in pbgui.ini selects a fork build.
+IMAGE = WORKER_IMAGE
+REVISION = WORKER_REVISION
+UPSTREAM_REVISION = "061e472e3d400cb3a740583d52f9d46e02eaf781"
 PREVIOUS_REVISION = "69227b75e808f8ce1f4b8949350b3311916bd377"
 ORIGINAL_REVISION = "ee2b7d49fd53ef790a66a28e2c85f2a6c8faebe8"
 # Persisted rental intents keep their own immutable image/revision pair.
 SUPPORTED_RENTAL_IMAGE_REVISIONS = {
-    IMAGE: REVISION,
-    "ghcr.io/msei99/pbgui-pb8-worker@sha256:32d7ee7a00330e01e4a2b8856275289eb8ee4b067542b09cfdce5e81c3b3691c": REVISION,
+    "ghcr.io/msei99/pbgui-pb8-worker@sha256:792a11f40098a3fffe9365c46e38f60c7bddaa35179c9bc608d130b5e1449dbe": UPSTREAM_REVISION,
+    "ghcr.io/msei99/pbgui-pb8-worker@sha256:32d7ee7a00330e01e4a2b8856275289eb8ee4b067542b09cfdce5e81c3b3691c": UPSTREAM_REVISION,
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:3fadf2220b4b19ee58aff6df95fa62a5e27e30d5a8058015e326ad4c229f55e0": "7b639e1180fa6bfe02e110429d4f931933c73089",
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:d715bf7596215f9664ab3c439b463f7cc265753775a226f23e308db38ed0676d": "903ed11153ce82d1b6760604eaa3a553309a752a",
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:a1a458b296653e438d2dac5a1cbfd4fa990045ce28cd4a2f70684fc2a404a0bf": "903ed11153ce82d1b6760604eaa3a553309a752a",
@@ -50,6 +53,9 @@ SUPPORTED_RENTAL_IMAGE_REVISIONS = {
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:ea52a9ea51f1945b5c3c5133246fd125ee7793faa288754b21e095b95e138743": ORIGINAL_REVISION,
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:0d827eb097a9d26c9088421097b4a9f0eacf660f08613871c48946ddf71a0a88": ORIGINAL_REVISION,
 }
+if CUSTOM_WORKER and not PROFILE_ERROR:
+    # A fork build is authorized only with the revision baked into its image.
+    SUPPORTED_RENTAL_IMAGE_REVISIONS[IMAGE] = REVISION
 SUPPORTED_RENTAL_IMAGES = tuple(SUPPORTED_RENTAL_IMAGE_REVISIONS)
 from vast_config_validation import METRICS, validate_cloud_config
 

@@ -40,6 +40,26 @@ contract with networking disabled before publication. On activation, update job,
 validation and calibration pins together, record the new layer sizes and metric
 contract, and retain the existing image/revision allowlist entries for recovery.
 
+### Building a worker from a Passivbot fork
+
+Run the manual workflow `.github/workflows/vast-worker-image.yml` in a PBGui
+fork, or build locally with the same build arguments:
+
+```sh
+docker build -f setup/vast_gpu_benchmark/Dockerfile \
+  --build-arg PB8_REPOSITORY=https://github.com/<owner>/passivbot.git \
+  --build-arg PB8_REVISION=<40-character commit> \
+  -t pbgui-pb8-worker:fork-base setup/vast_gpu_benchmark
+docker build -f setup/vast_gpu_benchmark/Dockerfile.calibration \
+  --build-arg BASE_IMAGE=pbgui-pb8-worker:fork-base \
+  --build-arg PB8_REVISION=<same commit> \
+  -t ghcr.io/<owner>/pbgui-pb8-worker:fork setup/vast_gpu_benchmark
+```
+
+Push the image, make the GHCR package public, and set the pushed digest and
+the commit in the `[vast_worker]` section of `pbgui.ini`. See the
+[user guide](../../docs/help/48_vast_gpu.md#worker-image-from-a-passivbot-fork).
+
 The base `Dockerfile` also retains historical benchmark tooling. The
 rental/template helpers below are not the live queue's lifecycle controller.
 

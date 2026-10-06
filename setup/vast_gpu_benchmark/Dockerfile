@@ -7,8 +7,10 @@ ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends git build-essential && rm -rf /var/lib/apt/lists/*
 # Official enarjord/passivbot source, pinned independently of dependency wheels.
+# Override PB8_REPOSITORY and PB8_REVISION to build a worker from a Passivbot fork.
+ARG PB8_REPOSITORY=https://github.com/enarjord/passivbot.git
 ARG PB8_REVISION=061e472e3d400cb3a740583d52f9d46e02eaf781
-RUN git clone https://github.com/enarjord/passivbot.git /opt/passivbot \
+RUN git clone "$PB8_REPOSITORY" /opt/passivbot \
     && cd /opt/passivbot && git checkout --detach "$PB8_REVISION" \
     && git rev-parse HEAD > /opt/pb8-revision \
     && python -m pip install --no-cache-dir '.[full,gpu-cuda]' \

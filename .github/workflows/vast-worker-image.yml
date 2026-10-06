@@ -1,0 +1,166 @@
+name: Build Vast PB8 worker image
+
+# Builds the PBGui Vast.ai GPU worker from a Passivbot repository and commit,
+# then pushes it to this repository owner's GHCR namespace. Copy the printed
+# [vast_worker] section into pbgui.ini and restart the PBGui API.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pb8_repository:
+        description: 'Passivbot Git repository (public HTTPS URL)'
+        required: true
+        default: 'https://github.com/FutureFM/passivbot.git'
+        type: string
+      pb8_ref:
+        description: 'Branch, tag or full commit of that repository'
+        required: true
+        default: 'master'
+        type: string
+      image_name:
+        description: 'GHCR package name'
+        required: true
+        default: 'pbgui-pb8-worker'
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: vast-worker-image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Check out PBGui
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Validate inputs and resolve the Passivbot commit
+        id: resolve
+        shell: bash
+        env:
+          PB8_REPOSITORY: ${{ inputs.pb8_repository }}
+          PB8_REF: ${{ inputs.pb8_ref }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+        run: |
+          set -euo pipefail
+          [[ "$PB8_REPOSITORY" =~ ^https://[A-Za-z0-9.-]+/[A-Za-z0-9._/-]+$ ]] || { echo "Invalid repository URL"; exit 1; }
+          [[ "$PB8_REF" =~ ^[A-Za-z0-9._/-]+$ && "$PB8_REF" != -* ]] || { echo "Invalid ref"; exit 1; }
+          [[ "$IMAGE_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "Invalid image name"; exit 1; }
+          git clone --quiet --filter=blob:none --no-checkout -- "$PB8_REPOSITORY" "$RUNNER_TEMP/pb8"
+          revision="$(git -C "$RUNNER_TEMP/pb8" rev-parse --verify --quiet "refs/remotes/origin/$PB8_REF^{commit}" \
+            || git -C "$RUNNER_TEMP/pb8" rev-parse --verify "$PB8_REF^{commit}")"
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || { echo "Cannot resolve $PB8_REF"; exit 1; }
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          {
+            echo "revision=$revision"
+            echo "short=${revision:0:7}"
+            echo "repository=ghcr.io/$owner/$IMAGE_NAME"
+          } >> "$GITHUB_OUTPUT"
+          echo "Passivbot $PB8_REPOSITORY $PB8_REF -> $revision"
+
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          docker system prune --all --force
+          df -h /
+
+      - name: Build PB8 base
+        shell: bash
+        env:
+          PB8_REPOSITORY: ${{ inputs.pb8_repository }}
+          REVISION: ${{ steps.resolve.outputs.revision }}
+          SHORT: ${{ steps.resolve.outputs.short }}
+        run: |
+          set -euo pipefail
+          docker build -f setup/vast_gpu_benchmark/Dockerfile \
+            --build-arg "PB8_REPOSITORY=$PB8_REPOSITORY" \
+            --build-arg "PB8_REVISION=$REVISION" \
+            -t "pbgui-pb8-worker:fork-$SHORT-base" setup/vast_gpu_benchmark
+
+      - name: Build PBGui worker layer
+        shell: bash
+        env:
+          REVISION: ${{ steps.resolve.outputs.revision }}
+          SHORT: ${{ steps.resolve.outputs.short }}
+          REPOSITORY: ${{ steps.resolve.outputs.repository }}
+        run: |
+          set -euo pipefail
+          docker build -f setup/vast_gpu_benchmark/Dockerfile.calibration \
+            --build-arg "BASE_IMAGE=pbgui-pb8-worker:fork-$SHORT-base" \
+            --build-arg "PB8_REVISION=$REVISION" \
+            --build-arg "IMAGE_SOURCE=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            -t "$REPOSITORY:fork-$SHORT" setup/vast_gpu_benchmark
+          docker image rm "pbgui-pb8-worker:fork-$SHORT-base" || true
+
+      - name: Verify the image offline
+        shell: bash
+        env:
+          REVISION: ${{ steps.resolve.outputs.revision }}
+          SHORT: ${{ steps.resolve.outputs.short }}
+          REPOSITORY: ${{ steps.resolve.outputs.repository }}
+        run: |
+          set -euo pipefail
+          docker run --rm --network none -e "EXPECTED=$REVISION" -w /opt/passivbot -e PYTHONPATH=/opt/passivbot/src \
+            "$REPOSITORY:fork-$SHORT" bash -euc '
+              test "$(cat /opt/pb8-revision)" = "$EXPECTED"
+              test -f /opt/pbgui/worker.py
+              python -c "from rust_utils import verify_loaded_runtime_extension as v; s = v(); assert s[\"runtime_compiled_source_stamp\"] == s[\"expected_source_fingerprint\"]"'
+          # PBGui validates cloud metrics against this contract before it rents a GPU.
+          docker run --rm --network none -w /opt/passivbot -e PYTHONPATH=/opt/passivbot/src \
+            -v "$PWD/setup/vast_gpu_benchmark/export_metric_contract.py:/opt/export_metric_contract.py:ro" \
+            "$REPOSITORY:fork-$SHORT" python /opt/export_metric_contract.py > "$RUNNER_TEMP/gpu_metric_contract.json"
+          if ! python3 -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])) != json.load(open(sys.argv[2])))' \
+              "$RUNNER_TEMP/gpu_metric_contract.json" setup/vast_gpu_benchmark/gpu_metric_contract.json; then
+            echo "::warning::The GPU metric contract of this Passivbot revision differs from setup/vast_gpu_benchmark/gpu_metric_contract.json. Replace that file with the gpu-metric-contract artifact in your PBGui fork."
+          fi
+
+      - name: Upload the GPU metric contract
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gpu-metric-contract
+          path: ${{ runner.temp }}/gpu_metric_contract.json
+
+      - name: Log in to GHCR
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push and report the immutable digest
+        shell: bash
+        env:
+          PB8_REPOSITORY: ${{ inputs.pb8_repository }}
+          REVISION: ${{ steps.resolve.outputs.revision }}
+          SHORT: ${{ steps.resolve.outputs.short }}
+          REPOSITORY: ${{ steps.resolve.outputs.repository }}
+        run: |
+          set -euo pipefail
+          docker push "$REPOSITORY:fork-$SHORT"
+          image="$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$REPOSITORY:fork-$SHORT" | grep "^$REPOSITORY@sha256:" | head -n 1)"
+          [[ "$image" =~ ^ghcr\.io/[a-z0-9][a-z0-9_/-]*@sha256:[0-9a-f]{64}$ ]] || { echo "Cannot read pushed digest"; exit 1; }
+          {
+            echo "## PB8 worker image published"
+            echo
+            echo "Source: \`$PB8_REPOSITORY\` at \`$REVISION\`"
+            echo
+            echo "Add this section to \`pbgui.ini\` and restart the PBGui API:"
+            echo
+            echo '```ini'
+            echo '[vast_worker]'
+            echo "image = $image"
+            echo "revision = $REVISION"
+            echo '```'
+            echo
+            echo "Vast.ai pulls the image anonymously. Make the GHCR package **public** once:"
+            echo "GitHub → Packages → \`${REPOSITORY##*/}\` → Package settings → Change visibility."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "image = $image"
+          echo "revision = $REVISION"

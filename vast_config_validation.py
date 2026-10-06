@@ -5,10 +5,11 @@ from pathlib import Path
 
 from vast_exchanges import SUPPORTED_EXCHANGES
 from vast_scenarios import scenario_plan
+from vast_worker_profile import PROFILE_ERROR, WORKER_IMAGE, WORKER_REVISION
 
 SERVICE = 'Vast'
-PROFILE_IMAGE = 'ghcr.io/msei99/pbgui-pb8-worker@sha256:792a11f40098a3fffe9365c46e38f60c7bddaa35179c9bc608d130b5e1449dbe'
-PROFILE_REVISION = '061e472e3d400cb3a740583d52f9d46e02eaf781'
+PROFILE_IMAGE = WORKER_IMAGE
+PROFILE_REVISION = WORKER_REVISION
 _METRIC_CONTRACT = json.loads((Path(__file__).resolve().parent / 'setup/vast_gpu_benchmark/gpu_metric_contract.json').read_text())
 METRICS = frozenset(_METRIC_CONTRACT['allowed_metrics'])
 if METRICS.intersection(_METRIC_CONTRACT['exact_only_metrics']):
@@ -57,7 +58,9 @@ def validate_cloud_config(config, iterations=None, workers=None, *, use_adg=Fals
     def finite(value):
         """Reject booleans, strings and non-finite numeric settings."""
         return type(value) in (int, float) and math.isfinite(value)
-    if image != PROFILE_IMAGE or revision != PROFILE_REVISION:
+    if PROFILE_ERROR:
+        error('worker.image', PROFILE_ERROR + ' Correct pbgui.ini and restart the API before queueing.')
+    elif image != PROFILE_IMAGE or revision != PROFILE_REVISION:
         error('worker.image', 'No validated GPU profile exists for this worker image/revision. Update the compatibility rules before queueing.')
     source = obj(config, 'config')
     live = obj(source.get('live'), 'live')

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from file_lock import advisory_file_lock
 from secure_files import atomic_write_private_text, ensure_private_directory
+from vast_worker_profile import CUSTOM_WORKER, PROFILE_ERROR, WORKER_IMAGE
 
 SERVICE = "VastCalibration"
 PROFILE_SCHEMA = 1
@@ -17,12 +18,16 @@ PROTOCOL_VERSION = 3
 CONFIGURABLE_PROTOCOL_VERSION = 4
 SUPPORTED_PROFILE_PROTOCOLS = frozenset({1, 2, PROTOCOL_VERSION, CONFIGURABLE_PROTOCOL_VERSION})
 # The published upstream worker supports both fixed and configurable tests.
-CALIBRATION_WORKER_DIGEST: str | None = "792a11f40098a3fffe9365c46e38f60c7bddaa35179c9bc608d130b5e1449dbe"
+# A fork worker built from Dockerfile.calibration carries this PBGui's worker protocol.
+UPSTREAM_CALIBRATION_WORKER_DIGEST = "792a11f40098a3fffe9365c46e38f60c7bddaa35179c9bc608d130b5e1449dbe"
+CALIBRATION_WORKER_DIGEST: str | None = (
+    UPSTREAM_CALIBRATION_WORKER_DIGEST if not CUSTOM_WORKER
+    else None if PROFILE_ERROR else WORKER_IMAGE.rpartition('@sha256:')[2])
 PREVIOUS_CALIBRATION_WORKER_DIGEST = "8ad62f43decae47fe670f3ac15ba7e4d7c648f0bb030fa511cd4771321ff4327"
 # Old evidence stays readable; new tests require the pinned current image.
 COMPATIBLE_CALIBRATION_IMAGES = frozenset({
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:32d7ee7a00330e01e4a2b8856275289eb8ee4b067542b09cfdce5e81c3b3691c",
-    "ghcr.io/msei99/pbgui-pb8-worker@sha256:" + CALIBRATION_WORKER_DIGEST,
+    "ghcr.io/msei99/pbgui-pb8-worker@sha256:" + UPSTREAM_CALIBRATION_WORKER_DIGEST,
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:3fadf2220b4b19ee58aff6df95fa62a5e27e30d5a8058015e326ad4c229f55e0",
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:d715bf7596215f9664ab3c439b463f7cc265753775a226f23e308db38ed0676d",
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:a1a458b296653e438d2dac5a1cbfd4fa990045ce28cd4a2f70684fc2a404a0bf",
@@ -32,7 +37,7 @@ COMPATIBLE_CALIBRATION_IMAGES = frozenset({
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:70366b9989a12528245d4c263e0e3dc4350271427afd76f9568dcf29cf33878f",
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:bee2e513d77e2c22f5b0671392063c51bb04bd547c7334e614fe918ada2d49e2",
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:8a85444f341a447564fc23e955b34f8a68b1970afc54026334aefa204c6cbc56",
-})
+} | ({WORKER_IMAGE} if CUSTOM_WORKER and not PROFILE_ERROR else set()))
 LEGACY_ANCHOR_POPULATIONS = (1024, 2048, 4096, 8192)
 ANCHOR_POPULATIONS = (4096, 8192)
 POPULATION_STEP = 4096

@@ -13,13 +13,16 @@ def test_published_worker_build_uses_pinned_official_pb8():
     revision = '061e472e3d400cb3a740583d52f9d46e02eaf781'
     base_tag = 'pbgui-pb8-worker:upstream-061e472-base'
     base = (root / 'Dockerfile').read_text()
-    assert 'git clone https://github.com/enarjord/passivbot.git' in base
+    assert 'ARG PB8_REPOSITORY=https://github.com/enarjord/passivbot.git' in base
+    assert 'git clone "$PB8_REPOSITORY" /opt/passivbot' in base
     assert f'ARG PB8_REVISION={revision}' in base
     assert 'git rev-parse HEAD > /opt/pb8-revision' in base
     assert 'rsync' in base
     wrapper = (root / 'Dockerfile.calibration').read_text()
-    assert f'FROM {base_tag}' in wrapper
-    assert f'test "$(cat /opt/pb8-revision)" = "{revision}"' in wrapper
+    assert f'ARG BASE_IMAGE={base_tag}' in wrapper
+    assert 'FROM ${BASE_IMAGE}' in wrapper
+    assert f'ARG PB8_REVISION={revision}' in wrapper
+    assert 'test "$(cat /opt/pb8-revision)" = "$PB8_REVISION"' in wrapper
     assert 'COPY cloud_worker.py /opt/pbgui/worker.py' in wrapper
     assert not (root / 'Dockerfile.worker').exists()
 

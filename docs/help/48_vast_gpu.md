@@ -206,6 +206,46 @@ bound to the image digest and PB8 revision; an unknown image cannot use old rule
 Market data availability/export and native runtime/device checks are additional
 stages; passing the configuration check does not guarantee a successful GPU run.
 
+### Worker image from a Passivbot fork
+
+By default, PBGui rents the published worker image. This image contains the
+official Passivbot revision that PBGui pins. To optimize with your own Passivbot
+fork, build a worker image from the fork and select it in `pbgui.ini`.
+
+1. In your PBGui fork on GitHub, open **Actions → Build Vast PB8 worker image**
+   and click **Run workflow**. Enter the HTTPS URL of your Passivbot fork and
+   the branch, tag or commit. The workflow builds the image, does an offline
+   check and pushes it to `ghcr.io/<owner>/pbgui-pb8-worker`.
+2. Make the GHCR package **public** one time (GitHub → **Packages** → package →
+   **Package settings** → **Change visibility**). Vast.ai and the PBGui preflight
+   download the image without credentials. A private package stops each rental
+   before PBGui rents a GPU.
+3. Copy the `[vast_worker]` section from the workflow summary into `pbgui.ini`:
+
+   ```ini
+   [vast_worker]
+   image = ghcr.io/<owner>/pbgui-pb8-worker@sha256:<digest>
+   revision = <40-character Passivbot commit>
+   ```
+
+4. Restart the PBGui API. New jobs, configuration checks and GPU calibration
+   then use this image and revision.
+
+Rules:
+
+- Use the digest (`@sha256:`), not a tag. The revision must be the commit in the
+  image. The worker reports its revision and PBGui stops a job if it is different.
+- If the section is incomplete or not valid, PBGui does not use the upstream image
+  as a replacement. The configuration check shows the error and blocks **Save & Queue**.
+- Existing rentals keep the image and revision that they started with. Do not
+  change the section while a rental from the old fork image is active.
+- Calibration profiles are linked to the revision. A new revision needs new calibration.
+- Keep the local PB8 installation on the same fork and commit. PBGui prepares
+  and checks configs with the local PB8 before it sends them to the worker.
+- The workflow compares the GPU metric contract of the fork with
+  `setup/vast_gpu_benchmark/gpu_metric_contract.json`. If it shows a warning,
+  replace that file with the `gpu-metric-contract` artifact of the run.
+
 ## GPU pool and shared rentals
 
 Set **Max concurrent GPUs** in **Rental & Automation** (default **1**, maximum **16**). To avoid starting every queued job manually, set **Auto rent & start** to **On** and save. The confirmation explicitly authorizes the per-rental and simultaneous budget targets. From then on, **Save & Queue** is enough: as soon as input preparation finishes, PBGui rents up to the saved limit and starts one optimizer on each GPU. Compatible idle GPUs are reused first. Provisioning and cleanup rentals count toward the limit until deletion is confirmed. **Auto rent & start** also works with a limit of 1. With Auto rent off, **Start** rents only one GPU for the existing queue, even if Max concurrent GPUs is higher; adding another job cannot authorize another rental. For an additional explicit rental while other jobs run, select a different offer under **GPU & Offers** and click **Rent**. Start that reserved GPU from its own Queue card; only one manual reservation can await Start queue at a time.

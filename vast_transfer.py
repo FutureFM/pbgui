@@ -663,6 +663,8 @@ def execution_input(store: JobStore, identifier: str) -> Path:
             raise VastError('Source config changed before execution', 422)
         config = load_pb8_config(source / 'optimize.json')
         config['backtest']['ohlcv_source_dir'] = remote_ohlcv
+        from vast_organillo import retarget
+        retarget(config, identifier)
         config['optimize']['n_cpus'] = row['workers']
         config['optimize'].setdefault('gpu', {})['exact_workers'] = row['workers']
         intent_owner = row.get('lease_id') or identifier

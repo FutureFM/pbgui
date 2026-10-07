@@ -10,6 +10,7 @@ from pathlib import Path
 
 from file_lock import advisory_file_lock
 from secure_files import atomic_write_private_text, ensure_private_directory
+from vast_worker_image import CUSTOM as _CUSTOM_WORKER, IMAGE as _WORKER_IMAGE
 
 SERVICE = "VastCalibration"
 PROFILE_SCHEMA = 1
@@ -32,7 +33,7 @@ COMPATIBLE_CALIBRATION_IMAGES = frozenset({
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:70366b9989a12528245d4c263e0e3dc4350271427afd76f9568dcf29cf33878f",
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:bee2e513d77e2c22f5b0671392063c51bb04bd547c7334e614fe918ada2d49e2",
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:8a85444f341a447564fc23e955b34f8a68b1970afc54026334aefa204c6cbc56",
-})
+}) | ({_WORKER_IMAGE} if _CUSTOM_WORKER else frozenset())
 LEGACY_ANCHOR_POPULATIONS = (1024, 2048, 4096, 8192)
 ANCHOR_POPULATIONS = (4096, 8192)
 POPULATION_STEP = 4096
@@ -58,9 +59,12 @@ PRESET_SCENARIOS = {
 }
 def calibration_worker_available(image: str, protocol: int = PROTOCOL_VERSION) -> bool:
     """Require an immutable image pin for the exact protocol sent to the worker."""
-    return (protocol in (PROTOCOL_VERSION, CONFIGURABLE_PROTOCOL_VERSION)
-            and bool(CALIBRATION_WORKER_DIGEST)
-            and image.endswith('@sha256:' + CALIBRATION_WORKER_DIGEST))
+    if protocol not in (PROTOCOL_VERSION, CONFIGURABLE_PROTOCOL_VERSION):
+        return False
+    # A custom fork worker is built from the same recipe, including the calibration runner.
+    if _CUSTOM_WORKER and image == _WORKER_IMAGE:
+        return True
+    return bool(CALIBRATION_WORKER_DIGEST) and image.endswith('@sha256:' + CALIBRATION_WORKER_DIGEST)
 
 
 _PROFILE_ID = re.compile(r"^[0-9a-f]{64}$")

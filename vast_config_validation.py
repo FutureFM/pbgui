@@ -7,8 +7,7 @@ from vast_exchanges import SUPPORTED_EXCHANGES
 from vast_scenarios import scenario_plan
 
 SERVICE = 'Vast'
-PROFILE_IMAGE = 'ghcr.io/msei99/pbgui-pb8-worker@sha256:792a11f40098a3fffe9365c46e38f60c7bddaa35179c9bc608d130b5e1449dbe'
-PROFILE_REVISION = '061e472e3d400cb3a740583d52f9d46e02eaf781'
+from vast_worker_image import CUSTOM as CUSTOM_WORKER, IMAGE as PROFILE_IMAGE, REVISION as PROFILE_REVISION, SETTINGS_ERROR as WORKER_SETTINGS_ERROR
 _METRIC_CONTRACT = json.loads((Path(__file__).resolve().parent / 'setup/vast_gpu_benchmark/gpu_metric_contract.json').read_text())
 METRICS = frozenset(_METRIC_CONTRACT['allowed_metrics'])
 if METRICS.intersection(_METRIC_CONTRACT['exact_only_metrics']):
@@ -57,13 +56,17 @@ def validate_cloud_config(config, iterations=None, workers=None, *, use_adg=Fals
     def finite(value):
         """Reject booleans, strings and non-finite numeric settings."""
         return type(value) in (int, float) and math.isfinite(value)
-    if image != PROFILE_IMAGE or revision != PROFILE_REVISION:
+    if WORKER_SETTINGS_ERROR:
+        error('worker.image', WORKER_SETTINGS_ERROR)
+    elif image != PROFILE_IMAGE or revision != PROFILE_REVISION:
         error('worker.image', 'No validated GPU profile exists for this worker image/revision. Update the compatibility rules before queueing.')
     source = obj(config, 'config')
     live = obj(source.get('live'), 'live')
     bt = obj(source.get('backtest'), 'backtest')
     if bt.get('offline', False) is not False:
         error('backtest.offline', 'The pinned Vast worker does not support PB8 offline provenance. Use Local for offline runs, or explicitly set offline to false.')
+    if bt.get('organillo_mode') and not CUSTOM_WORKER:
+        error('backtest.organillo_mode', 'The upstream Vast worker has no Organillo support. Pin a PB8 fork worker in pbgui.ini [vast], or use Local.')
     opt = obj(source.get('optimize'), 'optimize')
     bot = obj(source.get('bot'), 'bot')
     if live.get('strategy_kind') not in ('ema_anchor', 'trailing_martingale'):

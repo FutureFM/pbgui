@@ -19,6 +19,11 @@ GPU_NON_BOT_OVERRIDES = {
     'live.market_order_near_touch_threshold', 'live.market_orders_allowed',
     'live.max_realized_loss_pct', 'live.pnls_max_lookback_days',
 }
+from vast_worker_image import CUSTOM as _CUSTOM_WORKER
+if _CUSTOM_WORKER:
+    # PB8 forks with Organillo accept per-scenario cartons; PBGui ships them with the job.
+    GPU_NON_BOT_OVERRIDES |= {'backtest.organillo_mode', 'backtest.organillo_carton_path',
+                              'backtest.organillo_carton_hash'}
 
 
 def flatten_overrides(value, prefix=''):

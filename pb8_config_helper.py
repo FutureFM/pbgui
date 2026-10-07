@@ -989,6 +989,47 @@ def _migrate_editor_hsl(source, source_path, modules):
             "migration_unresolved": unresolved, "hsl_migration_required": False}
 
 
+def _organillo_universe(config: dict) -> dict:
+    """Return every coin a PB8 fork's Organillo carton can select for this config.
+
+    Organillo replaces approved_coins with the carton's eligible coins for each
+    backtest window, so exported market data must cover that union. Mirrors the
+    fork's prepare_suite: the base window plus each suite scenario's window and
+    carton overrides, limited to scenario coins when a scenario lists them.
+    """
+    try:
+        from historical_selection import prepare_config
+    except ImportError as exc:
+        raise ValueError("This PB8 runtime does not support Organillo historical selection") from exc
+
+    coins: list[str] = []
+
+    def add(candidate: dict, allowed=None) -> None:
+        prepared = prepare_config(candidate, allowed_coins=allowed)
+        if prepared is candidate:
+            return
+        for coin in prepared["live"]["approved_coins"]["long"]:
+            if coin not in coins:
+                coins.append(coin)
+
+    add(copy.deepcopy(config))
+    bt = config.get("backtest") or {}
+    if bt.get("suite_enabled"):
+        for scenario in bt.get("scenarios") or []:
+            if not isinstance(scenario, dict):
+                continue
+            candidate = copy.deepcopy(config)
+            cbt = candidate["backtest"]
+            cbt["start_date"] = scenario.get("start_date") or cbt["start_date"]
+            cbt["end_date"] = scenario.get("end_date") or cbt["end_date"]
+            for key, value in (scenario.get("overrides") or {}).items():
+                if str(key).startswith("backtest.organillo_"):
+                    cbt[str(key).split(".", 1)[1]] = value
+            cbt["organillo_carton_hash"] = None
+            add(candidate, scenario.get("coins") or None)
+    return {"coins": coins}
+
+
 def handle(payload: dict) -> dict:
     """Dispatch one JSON request and return a JSON-compatible result."""
     pb8_dir = Path(str(payload.get("pb8_dir") or "")).resolve()
@@ -1028,6 +1069,12 @@ def handle(payload: dict) -> dict:
 
     if operation == "optimizer_warmup":
         return _optimizer_warmup(payload.get('configs'))
+
+    if operation == "organillo_universe":
+        config = payload.get("config")
+        if not isinstance(config, dict):
+            raise TypeError("config must be an object")
+        return _organillo_universe(config)
 
     if operation == "status":
         return {

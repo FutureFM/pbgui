@@ -27,12 +27,13 @@ from vast_exchanges import SUPPORTED_EXCHANGES
 
 SERVICE = "Vast"
 PROJECT = Path(__file__).resolve().parent
-IMAGE = "ghcr.io/msei99/pbgui-pb8-worker@sha256:792a11f40098a3fffe9365c46e38f60c7bddaa35179c9bc608d130b5e1449dbe"
-REVISION = "061e472e3d400cb3a740583d52f9d46e02eaf781"
+# The active worker is upstream by default; pbgui.ini [vast] may pin a PB8 fork build.
+from vast_worker_image import DEFAULT_IMAGE, DEFAULT_REVISION, IMAGE, REVISION
 PREVIOUS_REVISION = "69227b75e808f8ce1f4b8949350b3311916bd377"
 ORIGINAL_REVISION = "ee2b7d49fd53ef790a66a28e2c85f2a6c8faebe8"
 # Persisted rental intents keep their own immutable image/revision pair.
 SUPPORTED_RENTAL_IMAGE_REVISIONS = {
+    DEFAULT_IMAGE: DEFAULT_REVISION,
     IMAGE: REVISION,
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:32d7ee7a00330e01e4a2b8856275289eb8ee4b067542b09cfdce5e81c3b3691c": REVISION,
     "ghcr.io/msei99/pbgui-pb8-worker@sha256:3fadf2220b4b19ee58aff6df95fa62a5e27e30d5a8058015e326ad4c229f55e0": "7b639e1180fa6bfe02e110429d4f931933c73089",
@@ -98,10 +99,11 @@ class _ProgressReader:
         return value
 
 
-def _write_input_archive(folder: Path, relative_files: list[Path], target: Path, progress) -> None:
+def _write_input_archive(folder: Path, relative_files: list[Path], target: Path, progress,
+                         extra_files: list[Path] = ()) -> None:
     """Write the existing gzip-tar format while reporting actual source consumption."""
     members = [Path('optimize.json'), Path('manifest.json'),
-               *(Path('ohlcv') / relative for relative in relative_files)]
+               *(Path('ohlcv') / relative for relative in relative_files), *extra_files]
     sizes = [safe.stat().st_size for relative in members
              for safe in [folder / relative]]
     total = sum(sizes)
@@ -396,8 +398,25 @@ class JobStore:
         from sweep_cycles import build_sweep_plan
 
         config = native_job_config(source, iterations, workers, use_adg)
+        shard_config = config
+        from vast_organillo import uses_organillo
+        organillo = uses_organillo(config)
+        if organillo:
+            # PB8 forks with Organillo replace approved_coins with carton selections,
+            # so the export must cover every coin the cartons can select.
+            from pb8_config import PB8ConfigurationError, get_pb8_organillo_universe
+            from pbgui_purefunc import pb8dir
+            from vast_organillo import localized, shard_selection_config
+            pb8_root = Path(pb8dir()).expanduser().resolve()
+            try:
+                universe = get_pb8_organillo_universe(localized(config, pb8_root))
+            except PB8ConfigurationError as exc:
+                raise VastError("Organillo carton check failed: " + str(exc), 422) from None
+            if len(universe) > 64 and not config["backtest"].get("suite_enabled"):
+                raise VastError(f"Organillo cartons select {len(universe)} coins; the GPU worker supports at most 64", 422)
+            shard_config = shard_selection_config(config, universe)
         try:
-            shards = select_shards(config, market_root, mapping_root)
+            shards = select_shards(shard_config, market_root, mapping_root)
         except (ValueError, OSError) as exc:
             raise VastError("Market data export failed: " + str(exc), 422) from None
         total_bytes = sum(p.stat().st_size for p, _ in shards)
@@ -417,6 +436,10 @@ class JobStore:
         })
         try:
             folder = ensure_private_directory(directory / "input")
+            carton_files = []
+            if organillo:
+                from vast_organillo import stage_cartons
+                carton_files = stage_cartons(config, pb8_root, folder, identifier, digest)
             save_prepared_pb8_config(config, folder / "optimize.json")
             from scenario_windows import build_validation_plan
             sweep = build_sweep_plan(source)
@@ -443,13 +466,15 @@ class JobStore:
                         "bytes_completed": copied_bytes, "bytes_total": total_bytes,
                     })
                     last_progress_update = time.monotonic()
+            manifest["files"].extend(carton_files)
             write_json(folder / "manifest.json", manifest)
             def compression_progress(value: dict) -> None:
                 """Persist bounded archive progress for automatic Queue polling."""
                 self.update(identifier, input_progress=value)
 
             _write_input_archive(folder, [relative for _, relative in shards],
-                                 directory / 'input.tar.gz', compression_progress)
+                                 directory / 'input.tar.gz', compression_progress,
+                                 [Path(item["path"]) for item in carton_files])
             (directory / "input.tar.gz").chmod(0o600)
             write_json(directory / "intent.json", {"id": identifier, "image": IMAGE, "pb8_revision": REVISION,
                        "results_root": str(results_root.resolve()), "bundle_sha256": digest(directory / "input.tar.gz"),

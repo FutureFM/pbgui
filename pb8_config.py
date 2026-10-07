@@ -353,6 +353,14 @@ def _call_helper(operation: str, **payload) -> dict:
     return result
 
 
+def get_pb8_organillo_universe(config: dict) -> list[str]:
+    """Return coins a fork's Organillo carton can select; cartons must be local paths."""
+    coins = _call_helper("organillo_universe", config=config).get("coins")
+    if not isinstance(coins, list) or not all(isinstance(coin, str) and coin for coin in coins):
+        raise PB8ConfigurationError("PB8 returned an invalid Organillo coin universe")
+    return coins
+
+
 def pb8_config_status() -> dict:
     """Return versions reported by the executable PB8 config runtime."""
     return _call_helper("status")

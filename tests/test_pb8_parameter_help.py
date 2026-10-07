@@ -69,6 +69,21 @@ def test_original_text_and_grouped_canonical_paths(documentation) -> None:
     assert not any("not_a_parameter" in key for key in entries)
 
 
+def test_fork_risk_fields_documented_under_live_map_to_bot_risk(documentation) -> None:
+    """Time-stop and divergence fields listed with live settings document bot.<side>.risk paths."""
+    path = documentation / "configuration.md"
+    path.write_text(
+        "## Live Trading Settings\n\n"
+        "- **time_stop_max_age_days**, **time_stop_close_pct**: Position-age reductions.\n"
+        "- **divergence_zscore_threshold**: Outlier threshold.\n",
+        encoding="utf-8",
+    )
+    entries = help_docs.get_pb8_parameter_help()["entries"]
+    assert entries["bot.*.risk.time_stop_max_age_days"]["text"] == "Position-age reductions."
+    assert entries["bot.*.risk.time_stop_close_pct"]["text"] == "Position-age reductions."
+    assert entries["bot.*.risk.divergence_zscore_threshold"]["text"] == "Outlier threshold."
+
+
 def test_document_changes_refresh_cache_and_callers_cannot_mutate_it(documentation) -> None:
     """Documentation updates become visible without a Rust rebuild or stale shared dictionaries."""
     first = help_docs.get_pb8_parameter_help()

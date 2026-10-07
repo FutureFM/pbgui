@@ -132,6 +132,9 @@ def _build_catalog(documents: dict[str, str]) -> dict:
         if "live." + key in entries:
             leaf = key.removeprefix("risk_")
             entries["bot.*.risk." + leaf] = entries["live." + key]
+    # Fork risk fields (time-based stops, divergence protection) are documented in the same list.
+    for key in [key for key in entries if key.startswith(("live.time_stop_", "live.divergence_"))]:
+        entries.setdefault("bot.*.risk." + key.removeprefix("live."), entries[key])
     for group, leaves in {
         "bot.*.forager.score_weights": ("volume", "ema_readiness", "volatility"),
         "live.approved_coins": ("long", "short"),

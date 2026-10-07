@@ -610,6 +610,43 @@ body.pb8-runtime-warning-visible #page-body { height: calc(100vh - 94px); }
   overflow-wrap: anywhere;
 }
 
+.optimize-bound-name .bound-cpu-only-badge {
+  display: none;
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--orange);
+  border-radius: 999px;
+  color: var(--orange);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+#opted-bounds-panel.backend-gpu .bound-cpu-only-badge {
+  display: inline-block;
+}
+
+.optimize-bound-name .bound-remove-btn {
+  flex: none;
+  margin-left: auto;
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.optional-bounds-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-md);
+  padding: var(--sp-md) 0 0;
+}
+
+.optional-bound-adder select {
+  max-width: 100%;
+}
+
 .optimize-bound-step-label {
   justify-content: center;
   font-size: var(--fs-xs);
@@ -6746,7 +6783,10 @@ function renderOptimizeBoundRow(entry, fixedSet) {
   return ''
     + '<div class="optimize-bound-row" id="' + getOptimizeBoundDomId(entry.key) + '">'
     +   '<div class="optimize-bound-head">'
-    +     '<div class="optimize-bound-name"><span class="bound-key-text" data-tip="' + escAttr(getOptimizeBoundLabelTip(entry)) + '">' + escapeHtml(entry.key) + '</span></div>'
+    +     '<div class="optimize-bound-name"><span class="bound-key-text" data-tip="' + escAttr(getOptimizeBoundLabelTip(entry)) + '">' + escapeHtml(entry.key) + '</span>'
+    +       (isOptimizeCpuOnlyBound(entry.key) ? '<span class="bound-cpu-only-badge" data-tip="GPU screening cannot search this bound; PB8 pins it to the configured bot value. Use the pymoo backend to search it.">CPU-only on GPU</span>' : '')
+    +       (isOptimizeCpuOnlyBound(entry.key) ? '<button type="button" class="bound-remove-btn" title="Remove bound (keeps the bot value fixed)" onclick="removeOptimizeOptionalBound(' + escAttr(JSON.stringify(entry.key)) + ')">×</button>' : '')
+    +     '</div>'
     +     '<div class="optimize-bound-step-label"><span data-tip="' + escAttr(getOptimizeBoundStepTip(entry)) + '">step</span></div>'
     +   '</div>'
     +   '<div class="optimize-bound-body">'
@@ -6797,7 +6837,8 @@ function renderOptimizeBoundsEditor() {
     +     renderOptimizeBoundsGroup('Bounds long', groups.long || [], fixedSet, false)
     +     renderOptimizeBoundsGroup('Bounds short', groups.short || [], fixedSet, false)
     +     renderOptimizeBoundsGroup('Other bounds', groups.other || [], fixedSet, true)
-    +   '</div>';
+    +   '</div>'
+    +   renderOptimizeOptionalBoundsAdder();
   if (!(state.optimizeBounds || []).length) {
     html += '<div class="limits-empty">No bounds configured.</div>';
   }
@@ -7481,6 +7522,17 @@ var OPT_BOUNDS_LIFECYCLE_ORDER = [
   'risk_wel_enforcer_threshold',
   'risk_twel_enforcer_threshold',
   'risk_we_excess_allowance_pct',
+  'time_stop_max_age_days',
+  'time_stop_close_pct',
+  'time_stop_we_trigger_pct',
+  'time_stop_close_we_min',
+  'time_stop_close_we_max',
+  'divergence_zscore_threshold',
+  'divergence_breadth_threshold_pct',
+  'divergence_breadth_drop_pct',
+  'divergence_min_timeframes',
+  'divergence_delay_multiplier',
+  'divergence_we_cap_pct',
   'unstuck_threshold',
   'unstuck_ema_dist',
   'unstuck_close_pct',
@@ -7577,8 +7629,107 @@ var OPT_BOUNDS_META = {
   unstuck_threshold: [0.0, 1.0, 0.01, 0.00001, 2],
   risk_wel_enforcer_threshold: [0.0, 2.0, 0.01, 0.00001, 2],
   risk_we_excess_allowance_pct: [0.0, 1.0, 0.01, 0.00001, 2],
-  risk_twel_enforcer_threshold: [0.0, 2.0, 0.01, 0.00001, 2]
+  risk_twel_enforcer_threshold: [0.0, 2.0, 0.01, 0.00001, 2],
+  // PB8 forks: time-based stops and cross-asset divergence protection (bot.<side>.risk).
+  time_stop_max_age_days: [0.0, 60.0, 0.1, 0.01, 2],
+  time_stop_close_pct: [0.0, 1.0, 0.01, 0.00001, 2],
+  time_stop_we_trigger_pct: [0.0, 1.0, 0.01, 0.00001, 2],
+  time_stop_close_we_min: [0.0, 1.0, 0.01, 0.00001, 2],
+  time_stop_close_we_max: [0.0, 1.0, 0.01, 0.00001, 2],
+  divergence_zscore_threshold: [0.0, 6.0, 0.05, 0.00001, 2],
+  divergence_breadth_threshold_pct: [0.0, 100.0, 1.0, 0.1, 1],
+  divergence_breadth_drop_pct: [0.0, 20.0, 0.1, 0.00001, 2],
+  divergence_min_timeframes: [1.0, 6.0, 1.0, 1.0, 0],
+  divergence_delay_multiplier: [1.0, 20.0, 0.1, 0.00001, 2],
+  divergence_we_cap_pct: [0.0, 1.0, 0.01, 0.00001, 2]
 };
+// Optional PB8 risk bounds that runtimes may omit from their template bounds.
+// Unbounded fields keep their bot.<side>.risk value, so they are added on demand.
+var OPT_V8_OPTIONAL_RISK_BOUNDS = [
+  'time_stop_max_age_days',
+  'time_stop_close_pct',
+  'time_stop_we_trigger_pct',
+  'time_stop_close_we_min',
+  'time_stop_close_we_max',
+  'divergence_zscore_threshold',
+  'divergence_breadth_threshold_pct',
+  'divergence_breadth_drop_pct',
+  'divergence_min_timeframes',
+  'divergence_delay_multiplier',
+  'divergence_we_cap_pct'
+];
+// GPU screening cannot search these; PB8 pins their bounds to the configured value.
+var OPT_V8_CPU_ONLY_BOUND_PREFIXES = ['time_stop_', 'divergence_'];
+
+function isOptimizeCpuOnlyBound(key) {
+  if (!optimizeEditorAdapter.isV8) return false;
+  var leaf = String(key || '').split('.').slice(-1)[0];
+  return OPT_V8_CPU_ONLY_BOUND_PREFIXES.some(function(prefix) { return leaf.indexOf(prefix) === 0; });
+}
+
+function getOptimizeOptionalBoundKey(side, leaf) {
+  return side + '.risk.' + leaf;
+}
+
+function getOptimizeMissingOptionalBounds(side) {
+  if (!optimizeEditorAdapter.isV8) return [];
+  var present = new Set((state.optimizeBounds || []).map(function(entry) { return entry.key; }));
+  return OPT_V8_OPTIONAL_RISK_BOUNDS.filter(function(leaf) {
+    return !present.has(getOptimizeOptionalBoundKey(side, leaf));
+  });
+}
+
+function getOptimizeConfiguredRiskValue(side, leaf) {
+  var sideConfig = {};
+  var node = el('opted-bot-' + side);
+  try {
+    sideConfig = JSON.parse((node && node.value) || '{}');
+  } catch (error) {
+    sideConfig = deepClone((((state.editorLastConfig || {}).bot || {})[side] || {}));
+  }
+  var value = Number(((sideConfig || {}).risk || {})[leaf]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function addOptimizeOptionalBound(side) {
+  var select = el('opted-optional-bound-' + side);
+  var leaf = select ? String(select.value || '') : '';
+  if (OPT_V8_OPTIONAL_RISK_BOUNDS.indexOf(leaf) < 0) return;
+  var key = getOptimizeOptionalBoundKey(side, leaf);
+  if ((state.optimizeBounds || []).some(function(entry) { return entry.key === key; })) return;
+  var meta = OPT_BOUNDS_META[leaf] || [0, 1];
+  var configured = getOptimizeConfiguredRiskValue(side, leaf);
+  // Start from the configured value so adding the bound does not change behavior until widened.
+  var value = configured != null ? configured : Number(meta[0]);
+  state.optimizeBounds = (state.optimizeBounds || []).concat([normalizeOptimizeBoundEntry(key, [value, value])])
+    .sort(compareOptimizeBoundEntries);
+  renderOptimizeBoundsEditor();
+  updateOptimizeBoundsHeader();
+  scheduleStructuredEditorSync();
+}
+
+function removeOptimizeOptionalBound(key) {
+  state.optimizeBounds = (state.optimizeBounds || []).filter(function(entry) { return entry.key !== key; });
+  renderOptimizeBoundsEditor();
+  updateOptimizeBoundsHeader();
+  scheduleStructuredEditorSync();
+}
+
+function renderOptimizeOptionalBoundsAdder() {
+  if (!optimizeEditorAdapter.isV8) return '';
+  var controls = ['long', 'short'].map(function(side) {
+    var missing = getOptimizeMissingOptionalBounds(side);
+    if (!missing.length) return '';
+    return '<label class="runtime-override-field optional-bound-adder">'
+      + '<span class="runtime-override-label" data-tip="Add an optional bot.' + side + '.risk bound (time-based stops, divergence protection). It starts fixed at the configured value; widen it to search. CPU-only: GPU screening pins it.">Add ' + side + ' bound</span>'
+      + '<select id="opted-optional-bound-' + side + '">'
+      + missing.map(function(leaf) { return '<option value="' + escAttr(leaf) + '">' + escapeHtml(leaf) + '</option>'; }).join('')
+      + '</select>'
+      + '<button type="button" class="btn ghost" onclick="addOptimizeOptionalBound(' + escAttr(JSON.stringify(side)) + ')">Add</button>'
+      + '</label>';
+  }).join('');
+  return controls ? '<div class="optional-bounds-row">' + controls + '</div>' : '';
+}
 var OPT_EXTRA_PARAM_META = {};
 var _optExtraParamKeys = emptyOptExtraParamKeys();
 
@@ -8305,6 +8456,8 @@ function updateOptimizeGpuHalvingFields() {
 
 function updateOptimizeBackendSections() {
   var visibility = optimizeSectionVisibility();
+  var boundsPanel = el('opted-bounds-panel');
+  if (boundsPanel) boundsPanel.classList.toggle('backend-gpu', !!visibility.showGpu);
   var pymooSection = el('optimize-pymoo-section');
   var deapSection = el('optimize-deap-section');
   var gpuSection = el('optimize-gpu-section');

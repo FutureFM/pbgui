@@ -247,9 +247,29 @@ def native_job_config(source: dict, iterations: int, workers: int, use_adg: bool
     return config
 
 
+def detached_supervisors() -> bool:
+    """macOS has no user systemd; supervisors run as detached sessions instead."""
+    return sys.platform == "darwin"
+
+
+def launch_detached(argv: list[str], log_path: Path) -> None:
+    """Start a supervisor outside the API's session; the runner's own lock rejects duplicates.
+
+    Unlike systemd there is no automatic restart: after a crash or reboot use Resume supervision.
+    """
+    fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "ab") as log:
+        subprocess.Popen(argv, cwd=PROJECT, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                         start_new_session=True, close_fds=True)
+
+
 def services_available() -> bool:
     """Check local supervision support without starting a service or rental."""
-    if not shutil.which("systemd-run") or not shutil.which("ssh") or not shutil.which("ssh-keygen"):
+    if not shutil.which("ssh") or not shutil.which("ssh-keygen"):
+        return False
+    if detached_supervisors():
+        return True
+    if not shutil.which("systemd-run"):
         return False
     try:
         return subprocess.run(["systemctl", "--user", "show-environment"], stdout=subprocess.DEVNULL,
@@ -810,7 +830,14 @@ class JobStore:
             raise VastError("Invalid supervisor mode", 422)
         log_root = ensure_private_directory(PROJECT / "data/logs/vast")
         unit = f"pbgui-vast-{identifier}-{mode}"
-        command = ["systemd-run", "--user", "--collect", "--unit", unit,
+        if detached_supervisors():
+            try:
+                launch_detached([sys.executable, str(PROJECT / "vast_job_runner.py"), mode, identifier],
+                                log_root / (identifier + "-" + mode + ".log"))
+            except OSError:
+                raise VastError("Local cloud supervisor could not be started", 503) from None
+            return
+        command =["systemd-run", "--user", "--collect", "--unit", unit,
                    "--property=Restart=on-failure", "--property=RestartSec=10", "--property=UMask=0077",
                    "--property=StandardOutput=append:" + str(log_root / (identifier + "-" + mode + ".log")),
                    "--property=StandardError=inherit", "--working-directory=" + str(PROJECT),

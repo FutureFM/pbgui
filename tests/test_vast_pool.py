@@ -434,6 +434,7 @@ def test_supervisor_launch_is_idempotent_and_independent(tmp_path, monkeypatch, 
     queue = CloudQueue(JobStore(tmp_path / 'vast'))
     queue.update(pool_error='stale supervisor failure')
     monkeypatch.setattr(pool, 'PROJECT', tmp_path)
+    monkeypatch.setattr(pool, 'detached_supervisors', lambda: False)
     calls = []
     def run(argv, **kwargs):
         """Record service-manager calls without executing them."""
@@ -447,3 +448,17 @@ def test_supervisor_launch_is_idempotent_and_independent(tmp_path, monkeypatch, 
         assert '--unit' in calls[-1] and 'pbgui-vast-pool' in calls[-1]
         assert '--property=Restart=on-failure' in calls[-1]
         assert calls[-1][-1] == str(tmp_path / 'vast_pool.py')
+
+
+def test_macos_pool_supervisor_starts_detached_session(tmp_path, monkeypatch):
+    """Without user systemd the scheduler runs detached; its pool lock rejects duplicates."""
+    queue = CloudQueue(JobStore(tmp_path / 'vast'))
+    queue.update(pool_error='stale supervisor failure')
+    monkeypatch.setattr(pool, 'PROJECT', tmp_path)
+    monkeypatch.setattr(pool, 'detached_supervisors', lambda: True)
+    launched = []
+    monkeypatch.setattr(pool, 'launch_detached', lambda argv, log: launched.append((argv, log)))
+    pool.launch_pool(queue)
+    assert queue.read()['pool_error'] is None
+    (argv, log), = launched
+    assert argv[-1] == str(tmp_path / 'vast_pool.py') and log == tmp_path / 'data/logs/vast/pool.log'

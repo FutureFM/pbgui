@@ -651,6 +651,7 @@ def test_resume_existing_supervisor_does_not_launch_duplicate(job, monkeypatch):
     store, identifier, _ = job
     calls = []
     monkeypatch.setattr(vast_jobs, 'PROJECT', store.root)
+    monkeypatch.setattr(vast_jobs, 'detached_supervisors', lambda: False)
     def fake_run(args, **kwargs):
         """Simulate an already running supervisor without launching a process."""
         calls.append(args)
@@ -659,6 +660,34 @@ def test_resume_existing_supervisor_does_not_launch_duplicate(job, monkeypatch):
     store.launch_service(identifier, 'guard')
     assert len(calls) == 1
     assert calls[0][:4] == ['systemctl', '--user', 'is-active', '--quiet']
+
+
+def test_macos_supervisor_starts_detached_session(job, monkeypatch):
+    """Without user systemd the runner is a detached session logging privately."""
+    import stat
+    import vast_jobs
+    store, identifier, _ = job
+    monkeypatch.setattr(vast_jobs, 'PROJECT', store.root)
+    monkeypatch.setattr(vast_jobs, 'detached_supervisors', lambda: True)
+    monkeypatch.setattr(vast_jobs.subprocess, 'run', lambda *a, **k: pytest.fail('systemd must not be used'))
+    launched = []
+    monkeypatch.setattr(vast_jobs.subprocess, 'Popen', lambda argv, **kwargs: launched.append((argv, kwargs)))
+    store.launch_service(identifier, 'guard')
+    (argv, kwargs), = launched
+    assert argv[1:] == [str(store.root / 'vast_job_runner.py'), 'guard', identifier]
+    assert kwargs['start_new_session'] is True and kwargs['cwd'] == store.root
+    log = store.root / 'data/logs/vast' / (identifier + '-guard.log')
+    assert stat.S_IMODE(log.stat().st_mode) == 0o600
+
+
+def test_macos_supervision_needs_only_openssh(monkeypatch):
+    """macOS supervision does not require systemd-run, but still requires OpenSSH."""
+    import vast_jobs
+    monkeypatch.setattr(vast_jobs, 'detached_supervisors', lambda: True)
+    monkeypatch.setattr(vast_jobs.shutil, 'which', lambda name: None if name == 'systemd-run' else '/usr/bin/' + name)
+    assert vast_jobs.services_available()
+    monkeypatch.setattr(vast_jobs.shutil, 'which', lambda name: None)
+    assert not vast_jobs.services_available()
 
 
 def test_multicoin_native_job_preserves_both_sides():

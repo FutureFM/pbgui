@@ -15,7 +15,7 @@ from logging_helpers import human_log as _log
 from secure_files import ensure_private_directory
 from vast_credentials import VastCredentialStore
 from vast_hosts import offer_priority, search_host_offers
-from vast_jobs import PROJECT, TERMINAL, job_id, services_available
+from vast_jobs import PROJECT, TERMINAL, detached_supervisors, job_id, launch_detached, services_available
 from vast_provider import VastClient, VastError, gpu_name_matches
 from vast_queue import CloudQueue, blocked_machine_ids, offer_host_allowed, worker_compatible_jobs
 
@@ -185,6 +185,14 @@ def launch_pool(queue: CloudQueue) -> None:
     unit = 'pbgui-vast-pool'
     log_root = ensure_private_directory(PROJECT / 'data/logs/vast')
     with advisory_file_lock(queue.root / '.pool-launch-lock'):
+        if detached_supervisors():
+            try:
+                launch_detached([sys.executable, str(PROJECT / 'vast_pool.py')], log_root / 'pool.log')
+            except OSError:
+                raise VastError('GPU pool supervisor could not be started', 503) from None
+            if queue.read().get('pool_error') is not None:
+                queue.update(pool_error=None)
+            return
         try:
             active = subprocess.run(['systemctl', '--user', 'is-active', '--quiet', unit],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)

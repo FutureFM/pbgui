@@ -163,11 +163,13 @@ def _run_preparation(store: JobStore, identifier: str, name: str, config: dict, 
         store.prepare(name, config, source_sha256, root / "data/ohlcv", root / "data/coindata", _results_root(),
                       iterations, workers, use_adg, identifier=identifier)
     except Exception as exc:
+        # VastError text is a safe public explanation; keep it so the queue shows why preparation failed.
+        reason = str(exc) if isinstance(exc, VastError) else type(exc).__name__
         try:
-            store.update(identifier, status="failed", error="Input preparation failed; no instance rented")
+            store.update(identifier, status="failed", error="Input preparation failed; no instance rented. " + reason)
         except Exception:
             pass
-        _log(SERVICE, "Cloud input preparation failed: " + type(exc).__name__, level="ERROR")
+        _log(SERVICE, "Cloud input preparation failed: " + reason, level="ERROR")
     finally:
         with _PREPARATION_LOCK:
             _PREPARATION_TASKS.pop(identifier, None)

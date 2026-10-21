@@ -1498,6 +1498,30 @@ class TestBuildMapping:
                 assert source_market.get("swap") is True, \
                     f"Non-swap market in mapping: {ccxt_sym}"
 
+    def test_build_mapping_adds_inactive_synthetic_markets(
+        self, coindata, tmp_workdir, sample_ccxt_markets, monkeypatch
+    ):
+        """PB8 synthetic stubs (purged perps) get inactive rows; a broken file is ignored."""
+        import synthetic_markets
+
+        pb8 = tmp_workdir / "pb8"
+        stubs = pb8 / "caches" / "binance" / "synthetic_markets.json"
+        stubs.parent.mkdir(parents=True)
+        luna = dict(sample_ccxt_markets["BTC/USDT:USDT"], id="LUNAUSDT", symbol="LUNA/USDT:USDT",
+                    base="LUNA", info={"onboardDate": "1611817200000"})
+        stubs.write_text(json.dumps({"LUNA/USDT:USDT": luna}))
+        monkeypatch.setattr(synthetic_markets, "pb8dir", lambda: str(pb8))
+        coindata.save_ccxt_markets("binance", sample_ccxt_markets)
+
+        assert coindata.build_mapping("binance") is True
+        rows = [r for r in coindata.load_exchange_mapping("binance") if r["ccxt_symbol"] == "LUNA/USDT:USDT"]
+        assert len(rows) == 1 and rows[0]["active"] is False
+        assert "LUNA/USDT:USDT" not in coindata.load_ccxt_markets("binance", use_cache=False)
+
+        stubs.write_text("[]")
+        assert coindata.build_mapping("binance") is True
+        assert all(r["ccxt_symbol"] != "LUNA/USDT:USDT" for r in coindata.load_exchange_mapping("binance"))
+
     def test_build_mapping_no_markets_returns_false(self, coindata, tmp_workdir):
         """build_mapping returns False when no markets available."""
         result = coindata.build_mapping("nonexistent_exchange")

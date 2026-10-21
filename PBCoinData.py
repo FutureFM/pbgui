@@ -1653,7 +1653,15 @@ class CoinData:
             if not markets:
                 _log(SERVICE, f'No markets available for {exchange_id}', level='ERROR')
                 return False
-            
+
+            # Purged perps kept for backtests (PB8 synthetic_markets.json) get mapping rows
+            # like any other inactive market; a broken stub file must not block real markets.
+            try:
+                from synthetic_markets import merge_synthetic_markets
+                markets = merge_synthetic_markets(exchange_id, markets)
+            except (OSError, ValueError) as e:
+                _log(SERVICE, f'Ignoring synthetic markets for {exchange_id}: {e}', level='ERROR')
+
             # Build CMC lookup dicts from self.data
             # cmc_best: best-rank entry per symbol (fallback)
             # cmc_all: ALL entries per symbol (for price-based disambiguation)

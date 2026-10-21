@@ -264,6 +264,16 @@ def _ccxt_find_inception(coin: str, timeout_s: float = 30.0) -> int | None:
     current_inception = get_current_market_inception_ms(coin)
     if current_inception is not None:
         return current_inception
+    # Purged perps (PB8 synthetic_markets.json) cannot be probed; their stub declares the
+    # first archived candle and the archive steps below fetch the history.
+    try:
+        from synthetic_markets import synthetic_onboard_ms
+        synthetic_inception = synthetic_onboard_ms("binance", _coin_to_ccxt_symbol(coin))
+    except (OSError, ValueError) as e:
+        append_exchange_download_log(STORAGE_EXCHANGE, f"[binance_best_1m] synthetic_markets_error coin={coin} err={e}", level="WARNING")
+        synthetic_inception = None
+    if synthetic_inception is not None:
+        return synthetic_inception
     ex = _get_ccxt_exchange(timeout_s)
     sym = _coin_to_ccxt_symbol(coin)
     since_ms = int(datetime(2018, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)

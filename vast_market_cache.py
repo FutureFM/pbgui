@@ -13,6 +13,7 @@ from logging_helpers import human_log
 from secure_files import read_regular_file_nofollow
 from vast_provider import VastError
 
+from synthetic_markets import is_synthetic_market, merge_synthetic_markets
 from vast_exchanges import SUPPORTED_EXCHANGES, quote_currency
 
 SERVICE = "VastRunner"
@@ -54,6 +55,13 @@ def _load_local_markets(exchanges):
             raise VastError(f"Local market metadata is invalid for {exchange}", 422) from None
         if not isinstance(source_markets, dict):
             raise VastError(f"Local market metadata is invalid for {exchange}", 422)
+        try:
+            # Purged perps kept for backtests travel with the snapshot (inactive stubs).
+            source_markets = merge_synthetic_markets(exchange, source_markets)
+        except (OSError, ValueError):
+            raise VastError(
+                f"Synthetic market stubs are invalid for {exchange}; fix the PB8 synthetic_markets.json", 422,
+            ) from None
         markets = {
             symbol: market for symbol, market in source_markets.items()
             if isinstance(symbol, str) and isinstance(market, dict)
@@ -62,7 +70,8 @@ def _load_local_markets(exchanges):
         }
         if not markets:
             raise VastError(f"Local market metadata has no linear perpetuals for {exchange}", 422)
-        result[exchange] = {"markets": markets, "fetched_at": before.st_mtime}
+        synthetic = {symbol: market for symbol, market in markets.items() if is_synthetic_market(market)}
+        result[exchange] = {"markets": markets, "fetched_at": before.st_mtime, "synthetic": synthetic}
     return result
 
 
@@ -119,6 +128,11 @@ def stage_public_markets(connection):
         " target=root/exchange/'markets.json'; target.parent.mkdir(parents=True,exist_ok=True)\n"
         " temporary=target.with_suffix('.tmp'); temporary.write_text(json.dumps(item['markets']))\n"
         " os.chmod(temporary,0o600); os.utime(temporary,(stamp,stamp)); os.replace(temporary,target)\n"
+        " stubs=root/exchange/'synthetic_markets.json'\n"
+        " if item.get('synthetic'):\n"
+        "  temporary=stubs.with_suffix('.tmp'); temporary.write_text(json.dumps(item['synthetic']))\n"
+        "  os.chmod(temporary,0o600); os.replace(temporary,stubs)\n"
+        " elif stubs.exists(): stubs.unlink()\n"
     )
     with tempfile.TemporaryFile() as stream:
         stream.write(gzip.compress(payload))
